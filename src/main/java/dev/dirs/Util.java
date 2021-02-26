@@ -7,6 +7,7 @@ import java.io.File;
 import java.lang.reflect.Method;
 import java.nio.charset.Charset;
 import java.util.Locale;
+import java.util.concurrent.TimeUnit;
 
 final class Util {
 
@@ -190,6 +191,10 @@ final class Util {
     }
   }
 
+  /**
+   * Return command output up to the number of line asked if the process exited with zero
+   * or null if the process did not finish in time or exited with non zero code
+   */
   private static String[] runCommands(int expectedResultLines, Charset charset, String... commands) throws IOException {
     final Process process = new ProcessBuilder(commands).start();
 
@@ -202,16 +207,23 @@ final class Util {
           line = line.substring(UTF8_BOM.length());
         results[i] = line;
       }
+      boolean processFinished = process.waitFor(5, TimeUnit.SECONDS);
+      if (!processFinished || process.exitValue() != 0) {
+        return null;
+      }
       return results;
+    } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        return null;
     } finally {
-      process.destroy();
-      try {
-        reader.close();
-      } catch (IOException e) {
-        e.printStackTrace();
+        process.destroy();
+        try {
+          reader.close();
+        } catch (IOException e) {
+          e.printStackTrace();
+        }
       }
     }
-  }
 
   private static String[] runWinCommands(int guidsLength, String[] dirs, String encodedCommand) throws IOException {
     // legacy powershell.exe seems to run faster than pwsh.exe so prefer it if available
@@ -222,13 +234,24 @@ final class Util {
         File commandFile = new File(dir, command);
         if (commandFile.exists()) {
           try {
+            String[] outputs;
+
+            outputs = runCommands(guidsLength, Charset.forName("UTF-8"),
+                    commandFile.toString(),
+                    "-version",
+                    "2",
+                    "-NoProfile",
+                    "-EncodedCommand",
+                    encodedCommand
+            );
+            if (outputs != null)
+              return outputs;
+
             return runCommands(guidsLength, Charset.forName("UTF-8"),
-                commandFile.toString(),
-                "-version",
-                "2",
-                "-NoProfile",
-                "-EncodedCommand",
-                encodedCommand
+                    commandFile.toString(),
+                    "-NoProfile",
+                    "-EncodedCommand",
+                    encodedCommand
             );
           } catch (IOException e) {
             firstException = firstException == null ? e : firstException;
